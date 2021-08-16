@@ -37,7 +37,7 @@ func TestCreateSecretsCmd(t *testing.T) {
 				tempDirName, err := ioutil.TempDir(os.TempDir(), testDirPrefix)
 				require.NoError(t, err, "Failed to create temp directory")
 
-				err = testCredentialsRequest(t, "firstcredreq", "namespace1", "secretName1", tempDirName)
+				err = generateIBMCloudProviderCredentialsRequest(t, "firstcredreq", "namespace1", "secretName1", tempDirName)
 				require.NoError(t, err, "Errored while setting up test CredReq files")
 
 				return tempDirName
@@ -71,7 +71,27 @@ func TestCreateSecretsCmd(t *testing.T) {
 				tempDirName, err := ioutil.TempDir(os.TempDir(), testDirPrefix)
 				require.NoError(t, err, "Failed to create temp directory")
 
-				err = testCredentialsRequest(t, "firstcredreq", "namespace1", "secretName1", tempDirName)
+				err = generateIBMCloudProviderCredentialsRequest(t, "firstcredreq", "namespace1", "secretName1", tempDirName)
+				require.NoError(t, err, "Errored while setting up test CredReq files")
+
+				return tempDirName
+			},
+			verify: func(t *testing.T, targetDir string) {
+				return
+			},
+			cleanup: func(t *testing.T) {
+				return
+			},
+			expectError: true,
+		},
+		{
+			name: "CreateSharedSecretsCmd with non-IBMCloudProvider CredentialsRequest should fail",
+			setup: func(t *testing.T) string {
+				os.Setenv(APIKeyEnvVar, apiKey)
+				tempDirName, err := ioutil.TempDir(os.TempDir(), testDirPrefix)
+				require.NoError(t, err, "Failed to create temp directory")
+
+				err = generateCredentialsRequest(t,"firstcredreq", "AWSProviderSpec", "namespace1", "secretName1", tempDirName)
 				require.NoError(t, err, "Errored while setting up test CredReq files")
 
 				return tempDirName
@@ -93,6 +113,7 @@ func TestCreateSecretsCmd(t *testing.T) {
 
 			targetDir, err := ioutil.TempDir(os.TempDir(), "ibmcloudcreatetest")
 			require.NoError(t, err, "Unexpected error creating temp dir for test")
+			defer os.RemoveAll(targetDir)
 
 			manifestsDir := filepath.Join(targetDir, manifestsDirName)
 			err = provisioning.EnsureDir(manifestsDir)
@@ -116,7 +137,11 @@ func TestCreateSecretsCmd(t *testing.T) {
 	}
 }
 
-func testCredentialsRequest(t *testing.T, crName, targetSecretNamespace, targetSecretName, targetDir string) error {
+func generateIBMCloudProviderCredentialsRequest(t *testing.T, crName, targetSecretNamespace, targetSecretName, targetDir string) error {
+	return generateCredentialsRequest(t, crName, "IBMCloudProviderSpec", targetSecretNamespace, targetSecretName, targetDir)
+}
+
+func generateCredentialsRequest(t *testing.T, crName, kind, targetSecretNamespace, targetSecretName, targetDir string) error {
 	credReqTemplate := `---
 apiVersion: cloudcredential.openshift.io/v1
 kind: CredentialsRequest
@@ -126,14 +151,14 @@ metadata:
 spec:
   providerSpec:
     apiVersion: cloudcredential.openshift.io/v1
-    kind: IBMCloudProviderSpec
+    kind: %s
   secretRef:
     namespace: %s
     name: %s
   serviceAccountNames:
   - testServiceAccount1`
 
-	credReq := fmt.Sprintf(credReqTemplate, crName, targetSecretNamespace, targetSecretName)
+	credReq := fmt.Sprintf(credReqTemplate, crName, kind, targetSecretNamespace, targetSecretName)
 
 	f, err := ioutil.TempFile(targetDir, "testCredReq")
 	require.NoError(t, err, "error creating temp file for CredentialsRequest")
