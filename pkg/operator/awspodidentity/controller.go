@@ -116,7 +116,7 @@ type awsPodIdentityController struct {
 	logger     log.FieldLogger
 }
 
-func (c *awsPodIdentityController) Start(stopCh <-chan struct{}) error {
+func (c *awsPodIdentityController) Start(ctx context.Context) error {
 	retryTimer := time.NewTimer(retryInterval)
 	for {
 		err := c.reconciler.ReconcileResources()
@@ -127,8 +127,8 @@ func (c *awsPodIdentityController) Start(stopCh <-chan struct{}) error {
 			break
 		}
 	}
-	go c.cache.Start(stopCh)
-	<-stopCh
+	go c.cache.Start(ctx)
+	<-ctx.Done()
 	return nil
 }
 
@@ -178,13 +178,13 @@ func Add(mgr manager.Manager, kubeconfig string) error {
 
 	p := predicate.Funcs{
 		UpdateFunc: func(e event.UpdateEvent) bool {
-			return isManaged(e.MetaNew)
+			return isManaged(e.ObjectNew)
 		},
 		CreateFunc: func(e event.CreateEvent) bool {
-			return isManaged(e.Meta)
+			return isManaged(e.Object)
 		},
 		DeleteFunc: func(e event.DeleteEvent) bool {
-			return isManaged(e.Meta)
+			return isManaged(e.Object)
 		},
 	}
 
@@ -238,7 +238,7 @@ type staticResourceReconciler struct {
 
 var _ reconcile.Reconciler = &staticResourceReconciler{}
 
-func (r *staticResourceReconciler) Reconcile(request reconcile.Request) (reconcile.Result, error) {
+func (r *staticResourceReconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	r.logger.Debugf("reconciling after watch event %#v", request)
 	err := r.ReconcileResources()
 	if err != nil {

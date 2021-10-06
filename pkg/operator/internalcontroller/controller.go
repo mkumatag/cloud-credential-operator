@@ -23,6 +23,7 @@ Needs to be kept in sync
 package internalcontroller
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -36,14 +37,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/runtime/inject"
-	logf "sigs.k8s.io/controller-runtime/pkg/runtime/log"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 )
 
-var log = logf.KBLog.WithName("controller")
+var log = logf.Log.WithName("controller")
 
 var _ inject.Injector = &Controller{}
 
@@ -88,7 +89,7 @@ type Controller struct {
 
 	// WaitForCacheSync allows tests to mock out the WaitForCacheSync function to return an error
 	// defaults to Cache.WaitForCacheSync
-	WaitForCacheSync func(stopCh <-chan struct{}) bool
+	WaitForCacheSync func(ctx context.Context) bool
 
 	// Started is true if the Controller has been Started
 	Started bool
@@ -102,7 +103,7 @@ type Controller struct {
 
 // Reconcile implements reconcile.Reconciler
 func (c *Controller) Reconcile(r reconcile.Request) (reconcile.Result, error) {
-	return c.Do.Reconcile(r)
+	return c.Do.Reconcile(context.Background(),r)
 }
 
 // Watch implements controller.Controller
@@ -124,11 +125,11 @@ func (c *Controller) Watch(src source.Source, evthdler handler.EventHandler, prc
 	}
 
 	log.Info("Starting EventSource", "Controller", c.Name, "Source", src)
-	return src.Start(evthdler, c.Queue, prct...)
+	return src.Start(context.Background(), evthdler, c.Queue, prct...)
 }
 
 // Start implements controller.Controller
-func (c *Controller) Start(stop <-chan struct{}) error {
+func (c *Controller) Start(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -143,7 +144,7 @@ func (c *Controller) Start(stop <-chan struct{}) error {
 	if c.WaitForCacheSync == nil {
 		c.WaitForCacheSync = c.Cache.WaitForCacheSync
 	}
-	if ok := c.WaitForCacheSync(stop); !ok {
+	if ok := c.WaitForCacheSync(ctx); !ok {
 		// This code is unreachable right now since WaitForCacheSync will never return an error
 		// Leaving it here because that could happen in the future
 		err := fmt.Errorf("failed to wait for %s caches to sync", c.Name)
@@ -162,12 +163,12 @@ func (c *Controller) Start(stop <-chan struct{}) error {
 		go wait.Until(func() {
 			for c.processNextWorkItem() {
 			}
-		}, c.JitterPeriod, stop)
+		}, c.JitterPeriod, ctx.Done())
 	}
 
 	c.Started = true
 
-	<-stop
+	<-ctx.Done()
 	log.Info("Stopping workers", "Controller", c.Name)
 	return nil
 }
@@ -210,7 +211,7 @@ func (c *Controller) processNextWorkItem() bool {
 
 	// RunInformersAndControllers the syncHandler, passing it the namespace/Name string of the
 	// resource to be synced.
-	if result, err := c.Do.Reconcile(req); err != nil {
+	if result, err := c.Do.Reconcile(context.Background(),req); err != nil {
 		c.Queue.AddRateLimited(req)
 		log.Error(err, "Reconciler error", "Controller", c.Name, "Request", req)
 
