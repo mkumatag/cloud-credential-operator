@@ -29,7 +29,6 @@ func NewRefreshKeysCmd() *cobra.Command {
 	refreshKeysCmd.MarkPersistentFlagRequired("name")
 	refreshKeysCmd.PersistentFlags().StringVar(&Options.CredRequestDir, "credentials-requests-dir", "", "Directory containing files of CredentialsRequests to delete IAM Roles for (can be created by running 'oc adm release extract --credentials-requests --cloud=ibmcloud' against an OpenShift release image)")
 	refreshKeysCmd.MarkPersistentFlagRequired("credentials-requests-dir")
-	refreshKeysCmd.PersistentFlags().BoolVar(&Options.Force, "force", false, "delete all the service account forcefully(will delete all the entries with the name)")
 	refreshKeysCmd.PersistentFlags().StringVar(&Options.KubeConfigFile, "kubeconfig", "", "absolute path to the kubeconfig file")
 	refreshKeysCmd.MarkPersistentFlagRequired("kubeconfig")
 	refreshKeysCmd.PersistentFlags().StringVar(&Options.ResourceGroupName, "resource-group-name", "", "Name of the resource group used for scoping the access policies")
@@ -57,7 +56,7 @@ func refreshKeysCmd(cmd *cobra.Command, args []string) error {
 	apiKeyDetailsOptions.SetIamAPIKey(apiKey)
 	apiKeyDetails, _, err := ibmclient.GetAPIKeysDetails(apiKeyDetailsOptions)
 	if err != nil {
-		return errors.Wrap(err, "Failed to get Details for the given APIKey")
+		return errors.Wrap(err, "Failed to get details for the given APIKey")
 	}
 
 	cs, err := newClientset(Options.KubeConfigFile)
@@ -71,8 +70,8 @@ func refreshKeysCmd(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func refreshKeys(client ibmcloud.Client, cs *kubernetes.Clientset, accountID *string, name, resourceGroupName, credReqDir string, create bool) error {
-	resourceGroupID, err := getResourceGroupID(client, resourceGroupName)
+func refreshKeys(ibmcloudClient ibmcloud.Client, kubeClient *kubernetes.Clientset, accountID *string, name, resourceGroupName, credReqDir string, create bool) error {
+	resourceGroupID, err := getResourceGroupID(ibmcloudClient, resourceGroupName)
 	if err != nil {
 		return errors.Wrap(err, "Failed to getResourceGroupID")
 	}
@@ -85,16 +84,16 @@ func refreshKeys(client ibmcloud.Client, cs *kubernetes.Clientset, accountID *st
 
 	var serviceIDs []*ServiceID
 	for _, cr := range credReqs {
-		serviceID := NewServiceID(client, name, *accountID, resourceGroupID, cr)
+		serviceID := NewServiceID(ibmcloudClient, name, *accountID, resourceGroupID, cr)
 		serviceIDs = append(serviceIDs, serviceID)
 	}
 
 	for _, serviceID := range serviceIDs {
-		exists, list, err := serviceID.Exists()
+		list, err := serviceID.List()
 		if err != nil {
 			return errors.Wrapf(err, "Failed to check an existance for the ServiceID: %s", serviceID.name)
 		}
-		if !exists && !create {
+		if len(list) == 0 && !create {
 			return fmt.Errorf("ServiceID: %s does not exist, rerun with --create flag to create it", serviceID.name)
 		}
 		if len(list) > 1 {
@@ -104,11 +103,11 @@ func refreshKeys(client ibmcloud.Client, cs *kubernetes.Clientset, accountID *st
 
 	for _, serviceID := range serviceIDs {
 		log.Printf("Refershing the token for ServiceID: %s", serviceID.name)
-		exists, list, err := serviceID.Exists()
+		list, err := serviceID.List()
 		if err != nil {
 			return errors.Wrapf(err, "Failed to check an existance for the ServiceID: %s", serviceID.name)
 		}
-		if exists {
+		if len(list) != 0 {
 			serviceID.ServiceID = &list[0]
 			if err := serviceID.Refresh(); err != nil {
 				return errors.Wrapf(err, "Failed to create API Key for ServiceID: %s", serviceID.name)
@@ -120,7 +119,7 @@ func refreshKeys(client ibmcloud.Client, cs *kubernetes.Clientset, accountID *st
 			}
 		}
 
-		secret, err := serviceID.DumpAsSecret()
+		secret, err := serviceID.BuildSecret()
 		if err != nil {
 			return errors.Wrapf(err, "Failed to Dump the secret for the serviceID: %s", serviceID.name)
 		}
@@ -131,8 +130,8 @@ func refreshKeys(client ibmcloud.Client, cs *kubernetes.Clientset, accountID *st
 
 		log.Printf("Updating/Creating the secret: %s/%s for the serviceID: %s", secret.Namespace, secret.Name, serviceID.name)
 		//TODO(mkumatag): replace Patch() call with Apply() after k8s.io/client-go update to v1.21.0 or later
-		if _, err := cs.CoreV1().Secrets(secret.Namespace).Patch(context.TODO(), secret.Name, types.ApplyPatchType, data, metav1.PatchOptions{FieldManager: "cloud-credential-operator"}); err != nil {
-			return errors.Wrapf(err, "Failed to a secret")
+		if _, err := kubeClient.CoreV1().Secrets(secret.Namespace).Patch(context.TODO(), secret.Name, types.ApplyPatchType, data, metav1.PatchOptions{FieldManager: "ccoctl"}); err != nil {
+			return errors.Wrapf(err, "Failed to create/update secret")
 		}
 
 		log.Printf("Removing the stale API Keys.")

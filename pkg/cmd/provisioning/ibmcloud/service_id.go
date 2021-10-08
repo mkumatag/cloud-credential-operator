@@ -36,7 +36,7 @@ type Provision interface {
 	Do() error
 	UnDo(string) error
 
-	Exists() (bool, []iamidentityv1.ServiceID, error)
+	List() ([]iamidentityv1.ServiceID, error)
 
 	Refresh() error
 	RemoveStaleKeys() error
@@ -57,10 +57,10 @@ type ServiceID struct {
 	apiKey          *string
 }
 
-func (s *ServiceID) Exists() (bool, []iamidentityv1.ServiceID, error) {
+func (s *ServiceID) List() ([]iamidentityv1.ServiceID, error) {
 	_, err := s.decode()
 	if err != nil {
-		return false, nil, err
+		return nil, err
 	}
 
 	options := &iamidentityv1.ListServiceIdsOptions{
@@ -69,20 +69,20 @@ func (s *ServiceID) Exists() (bool, []iamidentityv1.ServiceID, error) {
 	}
 	list, _, err := s.Client.ListServiceID(options)
 	if err != nil {
-		return false, nil, errors.Wrapf(err, "failed to list the serviceIDs")
+		return nil, errors.Wrapf(err, "failed to list the serviceIDs")
 	}
 	if len(list.Serviceids) >= 1 {
-		return true, list.Serviceids, nil
+		return list.Serviceids, nil
 	}
-	return false, nil, nil
+	return nil, nil
 }
 
 func (s *ServiceID) Validate() error {
-	exists, _, err := s.Exists()
+	list, err := s.List()
 	if err != nil {
 		return err
 	}
-	if exists {
+	if len(list) != 0 {
 		return errors.Errorf("exists with the same name: %s, please delete the entries or create with a different name", s.name)
 	}
 	return nil
@@ -116,7 +116,7 @@ func (s *ServiceID) Do() error {
 	return nil
 }
 
-func (s *ServiceID) DumpAsSecret() (*corev1.Secret, error) {
+func (s *ServiceID) BuildSecret() (*corev1.Secret, error) {
 	if s.apiKey == nil || s.cr == nil {
 		return nil, errors.New("apiKey or credentialRequest can't be nil")
 	}
@@ -147,7 +147,7 @@ func (s *ServiceID) Dump(targetDir string) error {
 	fileName := fmt.Sprintf(secretFileNamePattern, s.cr.Spec.SecretRef.Namespace, s.cr.Spec.SecretRef.Name)
 	filePath := filepath.Join(manifestsDir, fileName)
 
-	secret, err := s.DumpAsSecret()
+	secret, err := s.BuildSecret()
 	if err != nil {
 		return errors.Wrapf(err, "Failed to Dump the secret for the serviceID: %s", s.name)
 	}
